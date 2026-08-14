@@ -1,11 +1,8 @@
-// Shared core for the dsh-imagegen plugin entries.
+// Shared core for the dsh-imagegen bundle entry (index.js).
 //
-// Both entry points (imagegen-tool.js for agent-preset installs,
-// index.js for deployment-level bundle installs via `dsh plugin add`)
-// build the same two model tools from this module. The caller supplies the
-// `define` normalizer (harness.defineTool in the dynamic/preset runtime,
-// defineTool from @deepseek-ai/dsh-tools in a deployment bundle) and the
-// `register` effect (harness.registerTool / ctx.tools.register).
+// Builds the two model tools from this module. The caller supplies the
+// `define` normalizer (defineTool from @deepseek-ai/dsh-tools) and the
+// `register` effect (ctx.tools.register).
 //
 // Transports live in ./scripts/ next to this file; paths resolve from
 // import.meta.url, so the package works from any install location.
@@ -15,15 +12,13 @@ import { join } from 'node:path'
 const SCRIPTS_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'scripts')
 const SCRIPT_CODEX = join(SCRIPTS_DIR, 'codex-imagegen.mjs')
 const SCRIPT_VISION = join(SCRIPTS_DIR, 'codex-vision.mjs')
-const SCRIPT_OPENAI = join(SCRIPTS_DIR, 'image_gen.py')
 
 const ALLOWED_SIZES = new Set(['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'])
-const ALLOWED_QUALITIES = new Set(['low', 'medium', 'high', 'auto'])
 const ALLOWED_FORMATS = new Set(['png', 'jpeg', 'webp'])
 
 /**
  * Build and register the image_gen and image_vision model tools.
- * @param define - ToolDefinition normalizer (harness.defineTool or @deepseek-ai/dsh-tools defineTool).
+ * @param define - ToolDefinition normalizer (@deepseek-ai/dsh-tools defineTool).
  * @param deps - { shell, credentials, fs } services from the caller's context.
  * @param register - effect that registers one tool and returns its disposer.
  * @returns the two disposers.
@@ -82,35 +77,6 @@ export function installImageTools(define, deps, register) {
     return { backend: 'chatgpt-subscription', ...parsed }
   }
 
-  const runOpenAiBackend = async ({ prompt, out, size, quality, format, apiKey, signal }) => {
-    const parts = [
-      'python3', JSON.stringify(SCRIPT_OPENAI), 'generate',
-      '--prompt-file', '/dev/stdin',
-      '--out', '"$(printf %s ' + JSON.stringify(btoa(out)) + ' | base64 -d)"',
-      '--size', size === undefined ? 'auto' : JSON.stringify(size),
-      '--quality', quality === undefined ? 'medium' : JSON.stringify(quality),
-      '--output-format', JSON.stringify(format)
-    ]
-    const spec = shell.resolve({
-      command: parts.join(' '),
-      env: { OPENAI_API_KEY: apiKey },
-      timeoutMs: 360000,
-      signal,
-      stdin: prompt,
-    })
-    const run = await shell.run(spec)
-    return {
-      ok: run.exitCode === 0,
-      backend: 'openai-api',
-      outputPath: out,
-      exitCode: run.exitCode,
-      timedOut: run.timedOut,
-      aborted: run.aborted,
-      stdout: outputText(run.stdout),
-      stderr: outputText(run.stderr),
-    }
-  }
-
   const runVisionBackend = async ({ image, question, model, signal }) => {
     const env = await codexEnv({
       VG_IMAGE: image,
@@ -133,14 +99,13 @@ export function installImageTools(define, deps, register) {
 
   const genTool = define({
     name: 'image_gen',
-    description: 'Generate a bitmap image using the ChatGPT subscription (default) or the OpenAI Images API when OPENAI_API_KEY is configured. Use when the user asks to create a raster image: illustrations, icons, logos, photos, concept art, UI mockups, game assets. Provide a detailed prompt (subject, style, composition, palette, constraints). Saves the image under output/imagegen/ and returns its path. Transparent-background output is not supported (use a chroma-key background instead).',
+    description: 'Generate a bitmap image using the ChatGPT subscription (Codex backend, no API key required). Use when the user asks to create a raster image: illustrations, icons, logos, photos, concept art, UI mockups, game assets. Provide a detailed prompt (subject, style, composition, palette, constraints). Saves the image under output/imagegen/ and returns its path. Transparent-background output is not supported (use a chroma-key background instead).',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Detailed description of the image to generate.' },
       out: { type: 'string', description: 'Output path relative to the workspace, e.g. output/imagegen/whale-icon.png. Defaults to output/imagegen/<timestamp>.png.' },
       size: { type: 'string', description: 'Output size: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, or auto (default).' },
-      quality: { type: 'string', enum: ['low', 'medium', 'high', 'auto'], description: 'Quality; default medium. Only used on the OpenAI Images API backend.' },
       format: { type: 'string', enum: ['png', 'jpeg', 'webp'], description: 'Output format; default png.' },
-      model: { type: 'string', description: 'Model override (ChatGPT backend, e.g. gpt-5.5). Defaults to gpt-5.5.' }
+      model: { type: 'string', description: 'Model override (e.g. gpt-5.5). Defaults to gpt-5.5.' }
     },
     output: {
       schema: { type: 'json' },
@@ -154,10 +119,6 @@ export function installImageTools(define, deps, register) {
       if (size !== undefined && !ALLOWED_SIZES.has(size)) {
         return { ok: false, error: 'size must be one of 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, auto.' }
       }
-      const quality = args.quality === undefined ? undefined : String(args.quality)
-      if (quality !== undefined && !ALLOWED_QUALITIES.has(quality)) {
-        return { ok: false, error: 'quality must be low, medium, high, or auto.' }
-      }
       const format = args.format === undefined ? 'png' : String(args.format)
       if (!ALLOWED_FORMATS.has(format)) {
         return { ok: false, error: 'format must be png, jpeg, or webp.' }
@@ -165,14 +126,7 @@ export function installImageTools(define, deps, register) {
       const model = args.model === undefined ? undefined : String(args.model)
       const out = String(args.out ?? ('output/imagegen/' + Date.now() + '.png'))
 
-      const apiKey = await credentials.resolve('OPENAI_API_KEY')
-
-      let result
-      if (apiKey && apiKey.value) {
-        result = await runOpenAiBackend({ prompt, out, size, quality, format, apiKey: apiKey.value, signal: exec.signal })
-      } else {
-        result = await runCodexBackend({ prompt, out, size, format, model, signal: exec.signal })
-      }
+      const result = await runCodexBackend({ prompt, out, size, format, model, signal: exec.signal })
 
       if (result.ok && result.outputPath && fs !== undefined) {
         try {

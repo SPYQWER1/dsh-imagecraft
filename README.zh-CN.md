@@ -19,7 +19,7 @@
 image_gen / image_vision（模型工具）
         │  harness.registerTool + 凭据服务
         ▼
-imagegen-tool.js（Cordis 插件）
+index.js（Cordis bundle 入口）
         │  shell 服务，参数全部经环境变量传递
         ▼
 scripts/codex-imagegen.mjs / codex-vision.mjs   ← 自研传输层
@@ -37,7 +37,6 @@ scripts/codex-imagegen.mjs / codex-vision.mjs   ← 自研传输层
 - ChatGPT 订阅登录态：
   - `codex login` 生成的 `~/.codex/auth.json`（推荐），**或**
   - DSH 凭据 `OPENAI_CODEX_API_KEY` / `OPENAI_CODEX_REFRESH_TOKEN`
-- Python 3 + `openai` SDK —— **仅当**你想用可选的 `OPENAI_API_KEY` 后端
 
 ## 安装
 
@@ -47,9 +46,6 @@ scripts/codex-imagegen.mjs / codex-vision.mjs   ← 自研传输层
 # 从 git 安装（无构建步骤，无需 pnpm allowBuilds 授权）
 dsh plugin --profile web add github:SPYQWER1/dsh-imagegen
 
-# 或从 tarball 安装（pnpm pack 产物）
-dsh plugin --profile web add ./dsh-imagegen-1.2.0.tgz
-
 # 或发布到 npm 后
 dsh plugin --profile web add dsh-imagegen
 ```
@@ -58,18 +54,6 @@ dsh plugin --profile web add dsh-imagegen
 
 bundle 安装时 `@deepseek-ai/dsh-tools` 等 in-box 包以 optional peer 形式从 harness 安装解析，不会拉取额外 npm 包。bundle 入口是 `index.js`，把两个工具注册进 host 注册表，并通过 `tools.js` 共享 `scripts/` 传输层。
 
-### 作为独立 CLI
-
-传输脚本不依赖 harness，可直接命令行使用：
-
-```bash
-# 生成图片（写入 PNG，stdout 输出 JSON）
-CG_PROMPT="a cute whale icon, flat vector style" CG_OUT=whale.png CG_SIZE=1024x1024 \
-  node scripts/codex-imagegen.mjs
-
-# 描述图片
-VG_IMAGE=whale.png VG_QUESTION="what is this?" node scripts/codex-vision.mjs
-```
 
 ## 使用
 
@@ -85,7 +69,6 @@ VG_IMAGE=whale.png VG_QUESTION="what is this?" node scripts/codex-vision.mjs
 | `prompt` | string（必填） | 详细描述（主体、风格、构图、配色、约束）。 |
 | `out` | string | 相对工作区的输出路径。默认 `output/imagegen/<时间戳>.png`。 |
 | `size` | string | `1024x1024`、`1536x1024`、`1024x1536`、`2048x2048`、`2048x1152` 或 `auto`（默认）。 |
-| `quality` | string | `low`/`medium`/`high`/`auto`——仅 OpenAI API 后端生效。 |
 | `format` | string | `png`（默认）、`jpeg`、`webp`。 |
 | `model` | string | ChatGPT 后端模型，默认 `gpt-5.5`。 |
 
@@ -96,10 +79,6 @@ VG_IMAGE=whale.png VG_QUESTION="what is this?" node scripts/codex-vision.mjs
 | `image` | string（必填） | 图片路径（png/jpeg/webp/gif），相对工作区或绝对路径。 |
 | `question` | string | 可选焦点问题；默认输出完整描述。 |
 | `model` | string | 默认 `gpt-5.5`。 |
-
-## 可选的 OpenAI API 后端
-
-若 DSH 中配置了 `OPENAI_API_KEY` 凭据，`image_gen` 将改走 OpenAI Images API（`scripts/image_gen.py`，gpt-image-2）而非 ChatGPT 订阅。`scripts/image_gen.py` 取自 Codex [imagegen skill](https://github.com/liustack/skills)（MIT，见 [`scripts/UPSTREAM-IMAGE-GEN-PY.LICENSE.txt`](./scripts/UPSTREAM-IMAGE-GEN-PY.LICENSE.txt)）。
 
 ## 注意事项
 

@@ -19,7 +19,7 @@ Both tools reuse the **ChatGPT login state** (the same OAuth tokens the official
 image_gen / image_vision (model tool)
         │  harness.registerTool + credentials service
         ▼
-imagegen-tool.js (Cordis plugin)
+index.js (Cordis bundle entry)
         │  shell service, env-only argument passing
         ▼
 scripts/codex-imagegen.mjs / codex-vision.mjs   ← harness-owned transports
@@ -37,7 +37,6 @@ Auth precedence (both transports): `CODEX_ACCESS_TOKEN` / `CODEX_REFRESH_TOKEN` 
 - A ChatGPT subscription login state:
   - `~/.codex/auth.json` from `codex login` (recommended), **or**
   - the `OPENAI_CODEX_API_KEY` / `OPENAI_CODEX_REFRESH_TOKEN` credentials in DSH
-- Python 3 + the `openai` SDK — **only** if you want the optional `OPENAI_API_KEY` backend
 
 ## Install
 
@@ -85,7 +84,6 @@ Ask the harness in natural language — the model drives the tools itself:
 | `prompt` | string (required) | Detailed description (subject, style, composition, palette, constraints). |
 | `out` | string | Output path relative to the workspace. Default `output/imagegen/<timestamp>.png`. |
 | `size` | string | `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `2048x1152`, or `auto` (default). |
-| `quality` | string | `low`/`medium`/`high`/`auto` — OpenAI API backend only. |
 | `format` | string | `png` (default), `jpeg`, `webp`. |
 | `model` | string | ChatGPT backend model, default `gpt-5.5`. |
 
@@ -96,10 +94,6 @@ Ask the harness in natural language — the model drives the tools itself:
 | `image` | string (required) | Path to the image (png/jpeg/webp/gif), workspace-relative or absolute. |
 | `question` | string | Optional focus question; defaults to a full description. |
 | `model` | string | Default `gpt-5.5`. |
-
-## Optional OpenAI API backend
-
-If an `OPENAI_API_KEY` credential is configured in DSH, `image_gen` routes to the OpenAI Images API (`scripts/image_gen.py`, gpt-image-2) instead of the ChatGPT subscription. `scripts/image_gen.py` is taken from the Codex [imagegen skill](https://github.com/liustack/skills) (MIT, see [`scripts/UPSTREAM-IMAGE-GEN-PY.LICENSE.txt`](./scripts/UPSTREAM-IMAGE-GEN-PY.LICENSE.txt)).
 
 ## Caveats
 
