@@ -1,4 +1,4 @@
-// Shared core for the dsh-imagegen bundle entry (index.js).
+// Shared core for the dsh-imagecraft bundle entry (index.js).
 //
 // Builds the two model tools from this module. The caller supplies the
 // `define` normalizer (defineTool from @deepseek-ai/dsh-tools) and the

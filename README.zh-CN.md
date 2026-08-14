@@ -1,4 +1,4 @@
-# dsh-imagegen
+# dsh-imagecraft
 
 [English](./README.md)
 
@@ -44,13 +44,13 @@ scripts/codex-imagegen.mjs / codex-vision.mjs   ← 自研传输层
 
 ```bash
 # 从 git 安装（无构建步骤，无需 pnpm allowBuilds 授权）
-dsh plugin --profile web add github:SPYQWER1/dsh-imagegen
+dsh plugin --profile web add github:SPYQWER1/dsh-imagecraft
 
 # 或发布到 npm 后
-dsh plugin --profile web add dsh-imagegen
+dsh plugin --profile web add dsh-imagecraft
 ```
 
-然后重启该 profile（`dsh web` / `dsh --profile web`），所有会话即可见这两个工具。卸载：`dsh plugin --profile web remove dsh-imagegen`。git 安装建议固定 commit（`github:SPYQWER1/dsh-imagegen#<sha>`），避免后续推送静默改变安装内容。
+然后重启该 profile（`dsh web` / `dsh --profile web`），所有会话即可见这两个工具。卸载：`dsh plugin --profile web remove dsh-imagecraft`。git 安装建议固定 commit（`github:SPYQWER1/dsh-imagecraft#<sha>`），避免后续推送静默改变安装内容。
 
 bundle 安装时 `@deepseek-ai/dsh-tools` 等 in-box 包以 optional peer 形式从 harness 安装解析，不会拉取额外 npm 包。bundle 入口是 `index.js`，把两个工具注册进 host 注册表，并通过 `tools.js` 共享 `scripts/` 传输层。
 
@@ -95,7 +95,6 @@ bundle 安装时 `@deepseek-ai/dsh-tools` 等 in-box 包以 optional peer 形式
 - `chatgpt.com/backend-api/codex/responses` 是官方 Codex CLI 使用的内部端点，**不是**文档化的公开 API——OpenAI 可能随时变更或限制。
 - 生图消耗 ChatGPT 套餐的 **Codex-usage** 计量配额。
 - 按 OpenAI 服务条款，请勿用 ChatGPT 订阅搭建面向公众的图像生成服务。
-- 不支持透明背景输出（可用纯色幕布背景 + 本地抠图替代）。
 
 ## 许可
 

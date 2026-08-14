@@ -1,4 +1,4 @@
-// dsh-imagegen — deployment bundle entry point (installed via `dsh plugin add`).
+// dsh-imagecraft — deployment bundle entry point (installed via `dsh plugin add`).
 //
 // Registers image_gen and image_vision into the host tools registry so every
 // session of the profile sees them. Shares all logic with the preset-install
@@ -6,7 +6,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { installImageTools } from './tools.js'
 
-export const name = 'dsh-imagegen'
+export const name = 'dsh-imagecraft'
 
 export function apply(ctx) {
   const shell = ctx.get('shell')
@@ -18,8 +18,8 @@ export function apply(ctx) {
     { shell, credentials, fs },
     (tool) => ctx.tools.register(tool),
   )
-  ctx.effect(() => genDispose, 'dsh-imagegen: register image_gen')
-  ctx.effect(() => visionDispose, 'dsh-imagegen: register image_vision')
+  ctx.effect(() => genDispose, 'dsh-imagecraft: register image_gen')
+  ctx.effect(() => visionDispose, 'dsh-imagecraft: register image_vision')
 }
 
 export const inject = ['tools']

@@ -1,6 +1,6 @@
 {
-  "name": "dsh-imagegen",
-  "version": "1.3.0",
+  "name": "dsh-imagecraft",
+  "version": "2.0.0",
   "description": "image_gen and image_vision model tools for the DeepSeek Harness, powered by the ChatGPT subscription (no API key).",
   "type": "module",
   "main": "index.js",

@@ -1,4 +1,4 @@
-# dsh-imagegen
+# dsh-imagecraft
 
 [中文](./README.zh-CN.md)
 
@@ -44,16 +44,16 @@ The package ships as a **bundle**: installing it into a profile registers the to
 
 ```bash
 # from a git host (no build step, so no pnpm allowBuilds permission needed)
-dsh plugin --profile web add github:SPYQWER1/dsh-imagegen
+dsh plugin --profile web add github:SPYQWER1/dsh-imagecraft
 
 # or from a tarball (pnpm pack)
-dsh plugin --profile web add ./dsh-imagegen-1.2.0.tgz
+dsh plugin --profile web add ./dsh-imagecraft-1.2.0.tgz
 
 # or from npm, once published
-dsh plugin --profile web add dsh-imagegen
+dsh plugin --profile web add dsh-imagecraft
 ```
 
-Then restart the profile (`dsh web` / `dsh --profile web`) — the tools appear in every session. `dsh plugin --profile web remove dsh-imagegen` uninstalls. Pin a commit for git installs (`github:SPYQWER1/dsh-imagegen#<sha>`) so a later push cannot change what runs.
+Then restart the profile (`dsh web` / `dsh --profile web`) — the tools appear in every session. `dsh plugin --profile web remove dsh-imagecraft` uninstalls. Pin a commit for git installs (`github:SPYQWER1/dsh-imagecraft#<sha>`) so a later push cannot change what runs.
 
 Bundle install resolves the in-box `@deepseek-ai/dsh-tools` peer from the harness installation; no extra npm packages are fetched. The bundle entry is `index.js`, which registers both tools into the host registry and shares the `scripts/` transports via `tools.js`.
 
