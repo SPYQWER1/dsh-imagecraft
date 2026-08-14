@@ -12,7 +12,6 @@ export function apply(ctx) {
   const shell = ctx.get('shell')
   const credentials = ctx.get('credentials')
   const fs = ctx.get('fs')
-  if (shell === undefined || credentials === undefined) return
   const [genDispose, visionDispose] = installImageTools(
     (definition) => defineTool(definition),
     { shell, credentials, fs },
@@ -22,4 +21,4 @@ export function apply(ctx) {
   ctx.effect(() => visionDispose, 'dsh-imagecraft: register image_vision')
 }
 
-export const inject = ['tools']
+export const inject = ['tools', 'shell', 'credentials']
