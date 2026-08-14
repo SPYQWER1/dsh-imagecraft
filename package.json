@@ -1,0 +1,10 @@
+{
+  "name": "dsh-imagegen",
+  "version": "1.0.0",
+  "description": "image_gen and image_vision model tools for the DeepSeek Harness, powered by the ChatGPT subscription (no API key).",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  }
+}
