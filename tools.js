@@ -99,13 +99,13 @@ export function installImageTools(define, deps, register) {
 
   const genTool = define({
     name: 'image_gen',
-    description: 'Generate a bitmap image using the ChatGPT subscription (Codex backend, no API key required). Use when the user asks to create a raster image: illustrations, icons, logos, photos, concept art, UI mockups, game assets. Provide a detailed prompt (subject, style, composition, palette, constraints). Saves the image under output/imagegen/ and returns its path. Transparent-background output is not supported (use a chroma-key background instead).',
+    description: 'Generate a new bitmap image (illustrations, icons, logos, photos, concept art, UI mockups, game assets) via the ChatGPT subscription. Use when the user asks to create or generate an image. Do NOT use to edit/transform an existing image (no input-image support), to produce transparent-background images (unsupported; suggest a chroma-key background instead), or when a vector/SVG/code asset is the better fit. Write `prompt` in detail: subject, style, composition, palette, lighting, constraints. Leave `size` as auto unless the user gives dimensions. On success the result carries the absolute `outputPath` — report it to the user. Result JSON: { ok, outputPath, bytes, revisedPrompt, model } or { ok: false, error }.',
     parameters: {
-      prompt: { type: 'string', required: true, description: 'Detailed description of the image to generate.' },
-      out: { type: 'string', description: 'Output path relative to the workspace, e.g. output/imagegen/whale-icon.png. Defaults to output/imagegen/<timestamp>.png.' },
-      size: { type: 'string', description: 'Output size: 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, or auto (default).' },
-      format: { type: 'string', enum: ['png', 'jpeg', 'webp'], description: 'Output format; default png.' },
-      model: { type: 'string', description: 'Model override (e.g. gpt-5.5). Defaults to gpt-5.5.' }
+      prompt: { type: 'string', required: true, description: 'Image description: subject, style, composition, palette, lighting, constraints. More detail yields better results.' },
+      out: { type: 'string', description: 'Output path relative to the workspace; parent directories are created. Default: output/imagegen/<timestamp>.png (never overwrites existing files).' },
+      size: { type: 'string', description: 'One of 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152. Default: auto — set only when the user specifies dimensions or aspect ratio.' },
+      format: { type: 'string', enum: ['png', 'jpeg', 'webp'], description: 'Output format. Default: png; use jpeg/webp when the user wants a smaller file.' },
+      model: { type: 'string', description: 'Backend model id. Default: gpt-5.5.' }
     },
     output: {
       schema: { type: 'json' },
@@ -144,11 +144,11 @@ export function installImageTools(define, deps, register) {
 
   const visionTool = define({
     name: 'image_vision',
-    description: 'Describe or answer questions about an image using the ChatGPT subscription (multimodal model via the Codex backend). Use when the user references an image file, URL, or pasted image and you cannot see its content: pass the image path and optionally a focus question; the returned text describes subjects, style, composition, colors, and quotes visible text verbatim. Never build your own OCR or read image bytes yourself — always use this tool. Requires an existing image path (png/jpeg/webp/gif).',
+    description: 'Describe or answer questions about an image via the ChatGPT subscription (multimodal). Use when the user references an image and you cannot see its content. `image` must be an existing file (png/jpeg/webp/gif), workspace-relative or absolute — verify it exists before calling; never guess the content. `question` is optional, any language (e.g. "翻译图中文字"); omit it for a full description (subjects, style, composition, colors, verbatim text). Never build your own OCR or read image bytes yourself — always use this tool. Returns { ok, text, model, image } or { ok: false, error }; relay `text` to the user.',
     parameters: {
-      image: { type: 'string', required: true, description: 'Path to the image file, relative to the workspace or absolute.' },
-      question: { type: 'string', description: 'Optional focus question or instruction (e.g. "翻译图中文字", "描述构图"). Defaults to a full description.' },
-      model: { type: 'string', description: 'Model override (default gpt-5.5).' }
+      image: { type: 'string', required: true, description: 'Path to an existing image file (png/jpeg/webp/gif), relative to the workspace or absolute.' },
+      question: { type: 'string', description: 'Optional focus question or instruction, any language. Omit for a full description.' },
+      model: { type: 'string', description: 'Backend model id. Default: gpt-5.5.' }
     },
     output: {
       schema: { type: 'json' },
