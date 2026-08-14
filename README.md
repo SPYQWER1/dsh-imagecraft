@@ -95,6 +95,16 @@ Ask the harness in natural language — the model drives the tools itself:
 | `question` | string | Optional focus question; defaults to a full description. |
 | `model` | string | Default `gpt-5.5`. |
 
+## Gallery
+
+`image_gen` — generate an image from a natural-language request:
+
+![image_gen demo](./生图.png)
+
+`image_vision` — a text-only model reads an image:
+
+![image_vision demo](./识图.png)
+
 ## Caveats
 
 - `chatgpt.com/backend-api/codex/responses` is the same internal endpoint the official Codex CLI uses. It is **not** a documented public API — OpenAI may change or restrict it at any time.

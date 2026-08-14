@@ -80,6 +80,16 @@ bundle 安装时 `@deepseek-ai/dsh-tools` 等 in-box 包以 optional peer 形式
 | `question` | string | 可选焦点问题；默认输出完整描述。 |
 | `model` | string | 默认 `gpt-5.5`。 |
 
+## 效果示例
+
+`image_gen` —— 根据自然语言请求生成图片：
+
+![image_gen 演示](./生图.png)
+
+`image_vision` —— 文本模型查看图片内容：
+
+![image_vision 演示](./识图.png)
+
 ## 注意事项
 
 - `chatgpt.com/backend-api/codex/responses` 是官方 Codex CLI 使用的内部端点，**不是**文档化的公开 API——OpenAI 可能随时变更或限制。
