@@ -65,6 +65,30 @@ The installer copies `imagegen-tool.js` + `scripts/` into the preset and appends
 
 Manual install: do the same two steps yourself. Uninstall: `./uninstall.sh --preset <id>`.
 
+### As a deployment-level bundle (`dsh plugin add`)
+
+The package also ships as a **bundle**: installing it into a profile registers the tools in the host registry, so **every session of that profile** gets them. This is the official plugin path:
+
+```bash
+# from a git host (no build step, so no pnpm allowBuilds permission needed)
+dsh plugin --profile web add github:SPYQWER1/dsh-imagegen
+
+# or from a tarball (pnpm pack)
+dsh plugin --profile web add ./dsh-imagegen-1.1.0.tgz
+
+# or from npm, once published
+dsh plugin --profile web add dsh-imagegen
+```
+
+Then restart the profile (`dsh web` / `dsh --profile web`) — the tools appear in every session. `dsh plugin --profile web remove dsh-imagegen` uninstalls. Pin a commit for git installs (`github:SPYQWER1/dsh-imagegen#<sha>`) so a later push cannot change what runs.
+
+Bundle install resolves the in-box `@deepseek-ai/dsh-tools` peer from the harness installation; no extra npm packages are fetched. The bundle entry is `index.js` (deployment), the preset entry is `imagegen-tool.js` (session) — both share `tools.js` and the same `scripts/` transports.
+
+| Install form | Scope | Command |
+| --- | --- | --- |
+| Preset (`install.sh`) | One agent preset / new sessions of it | `./install.sh --preset <id>` |
+| Bundle (`dsh plugin add`) | Whole profile / all sessions | `dsh plugin --profile web add github:SPYQWER1/dsh-imagegen` |
+
 ### As standalone CLI
 
 The transports are plain Node scripts and work without the harness:
