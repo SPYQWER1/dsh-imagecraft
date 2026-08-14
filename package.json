@@ -13,6 +13,32 @@
     "cordis.patch.yml",
     "scripts/"
   ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "plugin",
+    "image-generation",
+    "image-understanding",
+    "vision",
+    "chatgpt",
+    "codex",
+    "openai",
+    "gpt-image"
+  ],
+  "license": "MIT",
+  "author": "SPYQWER1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SPYQWER1/dsh-imagecraft.git"
+  },
+  "homepage": "https://github.com/SPYQWER1/dsh-imagecraft#readme",
+  "bugs": {
+    "url": "https://github.com/SPYQWER1/dsh-imagecraft/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -29,9 +55,5 @@
     "@deepseek-ai/dsh-tools": {
       "optional": true
     }
-  },
-  "license": "MIT",
-  "engines": {
-    "node": ">=22"
   }
 }
