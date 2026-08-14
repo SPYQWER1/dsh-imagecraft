@@ -1,0 +1,125 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { installImageTools } from '../tools.js'
+import { defaultAuthPath, resolveCodexAuth, safeJson } from '../scripts/codex-common.mjs'
+
+function makeHarness(stdout = JSON.stringify({ ok: true })) {
+  const definitions = []
+  const registrations = []
+  const calls = []
+  const credentials = { resolve: async () => undefined }
+  const shell = {
+    resolve(spec) {
+      calls.push(spec)
+      return spec
+    },
+    async run() {
+      return { exitCode: 0, stdout, stderr: '' }
+    },
+  }
+  const define = (definition) => definition
+  const register = (tool) => {
+    definitions.push(tool)
+    const dispose = () => { registrations.push(`disposed:${tool.name}`) }
+    return dispose
+  }
+  return { definitions, registrations, calls, credentials, shell, define, register }
+}
+
+test('registers image generation, vision, and web search tools', () => {
+  const harness = makeHarness()
+  const disposers = installImageTools(harness.define, {
+    shell: harness.shell,
+    credentials: harness.credentials,
+    fs: undefined,
+  }, harness.register)
+
+  assert.deepEqual(harness.definitions.map((tool) => tool.name), ['image_gen', 'image_vision', 'web_search'])
+  assert.equal(disposers.length, 3)
+  disposers.forEach((dispose) => dispose())
+  assert.deepEqual(harness.registrations, [
+    'disposed:image_gen',
+    'disposed:image_vision',
+    'disposed:web_search',
+  ])
+})
+
+test('validates web search arguments before spawning the transport', async () => {
+  const harness = makeHarness()
+  installImageTools(harness.define, {
+    shell: harness.shell,
+    credentials: harness.credentials,
+    fs: undefined,
+  }, harness.register)
+  const tool = harness.definitions.find((entry) => entry.name === 'web_search')
+  const exec = { signal: new AbortController().signal }
+
+  assert.deepEqual(await tool.execute({ query: '   ' }, exec), { ok: false, error: 'query is required.' })
+  assert.deepEqual(await tool.execute({ query: 'x', maxSources: 0 }, exec), { ok: false, error: 'maxSources must be an integer from 1 to 10.' })
+  assert.deepEqual(await tool.execute({ query: 'x', maxSources: 1.5 }, exec), { ok: false, error: 'maxSources must be an integer from 1 to 10.' })
+  assert.deepEqual(await tool.execute({ query: 'x', freshness: 'future' }, exec), { ok: false, error: 'freshness must be cached or live.' })
+  assert.equal(harness.calls.length, 0)
+})
+
+test('passes web search options to the Codex transport and returns sources', async () => {
+  const response = JSON.stringify({
+    ok: true,
+    query: 'DeepSeek Harness',
+    freshness: 'live',
+    summary: 'A concise result',
+    sources: [{ title: 'Official docs', url: 'https://example.com/docs', snippet: 'Relevant detail' }],
+    model: 'test-model',
+  })
+  const harness = makeHarness(response)
+  installImageTools(harness.define, {
+    shell: harness.shell,
+    credentials: harness.credentials,
+    fs: undefined,
+  }, harness.register)
+  const tool = harness.definitions.find((entry) => entry.name === 'web_search')
+  const result = await tool.execute({ query: 'DeepSeek Harness', maxSources: 3, freshness: 'live', model: 'test-model' }, {
+    signal: new AbortController().signal,
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.sources[0].url, 'https://example.com/docs')
+  assert.match(harness.calls[0].command, /codex-search\.mjs/)
+  assert.equal(harness.calls[0].env.CS_QUERY, 'DeepSeek Harness')
+  assert.equal(harness.calls[0].env.CS_MAX_SOURCES, '3')
+  assert.equal(harness.calls[0].env.CS_FRESHNESS, 'live')
+  assert.equal(harness.calls[0].env.CS_MODEL, 'test-model')
+})
+
+test('supports CODEX_HOME and keeps environment credentials highest priority', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-codex-tools-'))
+  const authPath = join(root, 'auth.json')
+  await writeFile(authPath, JSON.stringify({ tokens: {
+    access_token: 'file-access',
+    refresh_token: 'file-refresh',
+    account_id: 'file-account',
+  } }))
+  try {
+    assert.equal(defaultAuthPath({ CODEX_HOME: root }), authPath)
+    const resolved = resolveCodexAuth({
+      CODEX_HOME: root,
+      CODEX_ACCESS_TOKEN: 'env-access',
+      CODEX_REFRESH_TOKEN: 'env-refresh',
+      CODEX_ACCOUNT_ID: 'env-account',
+    })
+    assert.deepEqual({
+      accessToken: resolved.accessToken,
+      refreshToken: resolved.refreshToken,
+      accountId: resolved.accountId,
+    }, {
+      accessToken: 'env-access',
+      refreshToken: 'env-refresh',
+      accountId: 'env-account',
+    })
+    assert.deepEqual(safeJson(Buffer.from('{"ok":true}')), { ok: true })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

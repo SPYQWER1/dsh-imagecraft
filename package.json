@@ -1,7 +1,7 @@
 {
-  "name": "dsh-imagecraft",
-  "version": "2.0.2",
-  "description": "image_gen and image_vision model tools for the DeepSeek Harness, powered by the ChatGPT subscription (no API key).",
+  "name": "dsh-codex-tools",
+  "version": "1.0.0",
+  "description": "Codex-backed web search, image generation, and image understanding tools for the DeepSeek Harness.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -20,6 +20,7 @@
     "plugin",
     "image-generation",
     "image-understanding",
+    "web-search",
     "vision",
     "chatgpt",
     "codex",
@@ -30,11 +31,11 @@
   "author": "SPYQWER1",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SPYQWER1/dsh-imagecraft.git"
+    "url": "git+https://github.com/SPYQWER1/dsh-codex-tools.git"
   },
-  "homepage": "https://github.com/SPYQWER1/dsh-imagecraft#readme",
+  "homepage": "https://github.com/SPYQWER1/dsh-codex-tools#readme",
   "bugs": {
-    "url": "https://github.com/SPYQWER1/dsh-imagecraft/issues"
+    "url": "https://github.com/SPYQWER1/dsh-codex-tools/issues"
   },
   "engines": {
     "node": ">=22"

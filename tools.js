@@ -1,6 +1,6 @@
-// Shared core for the dsh-imagecraft bundle entry (index.js).
+// Shared core for the dsh-codex-tools bundle entry (index.js).
 //
-// Builds the two model tools from this module. The caller supplies the
+// Builds the Codex model tools from this module. The caller supplies the
 // `define` normalizer (defineTool from @deepseek-ai/dsh-tools) and the
 // `register` effect (ctx.tools.register).
 //
@@ -12,16 +12,18 @@ import { join } from 'node:path'
 const SCRIPTS_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'scripts')
 const SCRIPT_CODEX = join(SCRIPTS_DIR, 'codex-imagegen.mjs')
 const SCRIPT_VISION = join(SCRIPTS_DIR, 'codex-vision.mjs')
+const SCRIPT_SEARCH = join(SCRIPTS_DIR, 'codex-search.mjs')
 
 const ALLOWED_SIZES = new Set(['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'])
 const ALLOWED_FORMATS = new Set(['png', 'jpeg', 'webp'])
+const ALLOWED_FRESHNESS = new Set(['cached', 'live'])
 
 /**
- * Build and register the image_gen and image_vision model tools.
+ * Build and register the Codex-backed model tools.
  * @param define - ToolDefinition normalizer (@deepseek-ai/dsh-tools defineTool).
  * @param deps - { shell, credentials, fs } services from the caller's context.
  * @param register - effect that registers one tool and returns its disposer.
- * @returns the two disposers.
+ * @returns one disposer for each registered tool.
  */
 export function installImageTools(define, deps, register) {
   const { shell, credentials, fs } = deps
@@ -46,12 +48,21 @@ export function installImageTools(define, deps, register) {
     if (!collected) return undefined
     return typeof collected === 'string' ? collected : collected.text
   }
+  const resolveCredential = async (key) => {
+    try {
+      return await credentials.resolve(key)
+    } catch {
+      return undefined
+    }
+  }
   const codexEnv = async (extra) => {
-    const access = await credentials.resolve('OPENAI_CODEX_API_KEY')
-    const refresh = await credentials.resolve('OPENAI_CODEX_REFRESH_TOKEN')
+    const access = await resolveCredential('OPENAI_CODEX_API_KEY')
+    const refresh = await resolveCredential('OPENAI_CODEX_REFRESH_TOKEN')
+    const account = await resolveCredential('OPENAI_CODEX_ACCOUNT_ID')
     const env = { ...extra }
     if (access && access.value) env.CODEX_ACCESS_TOKEN = access.value
     if (refresh && refresh.value) env.CODEX_REFRESH_TOKEN = refresh.value
+    if (account && account.value) env.CODEX_ACCOUNT_ID = account.value
     return env
   }
 
@@ -93,6 +104,27 @@ export function installImageTools(define, deps, register) {
     const parsed = parseCliJson(run.stdout)
     if (!parsed) {
       return { ok: false, exitCode: run.exitCode, error: 'vision backend returned no parseable result', stderr: outputText(run.stderr) }
+    }
+    return parsed
+  }
+
+  const runSearchBackend = async ({ query, maxSources, freshness, model, signal }) => {
+    const env = await codexEnv({
+      CS_QUERY: query,
+      CS_MAX_SOURCES: String(maxSources),
+      CS_FRESHNESS: freshness,
+      CS_MODEL: model === undefined ? 'gpt-5.4-mini' : model,
+    })
+    const spec = shell.resolve({
+      command: 'node ' + JSON.stringify(SCRIPT_SEARCH),
+      env,
+      timeoutMs: 120000,
+      signal,
+    })
+    const run = await shell.run(spec)
+    const parsed = parseCliJson(run.stdout)
+    if (!parsed) {
+      return { ok: false, exitCode: run.exitCode, error: 'search backend returned no parseable result', stderr: outputText(run.stderr) }
     }
     return parsed
   }
@@ -164,5 +196,35 @@ export function installImageTools(define, deps, register) {
     }
   })
 
-  return [register(genTool), register(visionTool)]
+  const searchTool = define({
+    name: 'web_search',
+    description: 'Search the public web through the ChatGPT Codex subscription. Use for current facts, documentation, news, product information, or any question that benefits from online sources. Returns a concise summary and source URLs. Use freshness=live for time-sensitive questions and cached for stable topics. Do not claim a source says something unless it appears in the returned sources.',
+    parameters: {
+      query: { type: 'string', required: true, description: 'What to search for on the public web.' },
+      maxSources: { type: 'number', description: 'Maximum number of sources to return, from 1 to 10. Default: 5.' },
+      freshness: { type: 'string', enum: ['cached', 'live'], description: 'Use live for time-sensitive queries; cached is suitable for stable topics.' },
+      model: { type: 'string', description: 'Backend model id. Default: gpt-5.4-mini.' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }]
+    },
+    timeoutMs: 120000,
+    async execute(args, exec) {
+      const query = String(args.query ?? '').trim()
+      if (!query) return { ok: false, error: 'query is required.' }
+      const maxSources = args.maxSources === undefined ? 5 : Number(args.maxSources)
+      if (!Number.isInteger(maxSources) || maxSources < 1 || maxSources > 10) {
+        return { ok: false, error: 'maxSources must be an integer from 1 to 10.' }
+      }
+      const freshness = args.freshness === undefined ? 'cached' : String(args.freshness)
+      if (!ALLOWED_FRESHNESS.has(freshness)) {
+        return { ok: false, error: 'freshness must be cached or live.' }
+      }
+      const model = args.model === undefined ? undefined : String(args.model)
+      return runSearchBackend({ query, maxSources, freshness, model, signal: exec.signal })
+    }
+  })
+
+  return [register(genTool), register(visionTool), register(searchTool)]
 }
