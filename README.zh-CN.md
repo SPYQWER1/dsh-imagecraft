@@ -41,34 +41,14 @@ scripts/codex-imagegen.mjs / codex-vision.mjs   ← 自研传输层
 
 ## 安装
 
-### 作为 preset 插件（推荐）
-
-```bash
-git clone <repo-url> dsh-imagegen && cd dsh-imagegen
-./install.sh --preset <id>        # 安装到 ~/.dsh/.agent-presets/<id>
-# 或 ./install.sh --preset-dir /path/to/preset
-# 或直接 ./install.sh 从检测到的 preset 中选择
-```
-
-安装器把 `imagegen-tool.js` + `scripts/` 复制进 preset，并在 `agent.cordis.yml` 追加组成行（幂等，重复运行可更新文件）：
-
-```yaml
-- id: tool-imagegen
-  name: './imagegen-tool.js'
-```
-
-之后用该 preset 开新会话，`image_gen` / `image_vision` 即出现在模型工具列表中。卸载：`./uninstall.sh --preset <id>`。
-
-### 作为部署级 bundle 安装（`dsh plugin add`）
-
-仓库同时以 **bundle** 形态发布：装进 profile 后工具注册在 host 注册表，**该 profile 的所有会话**都能用。这是官方插件安装路径：
+仓库以 **bundle** 形态发布：装进 profile 后工具注册在 host 注册表，**该 profile 的所有会话**都能用。
 
 ```bash
 # 从 git 安装（无构建步骤，无需 pnpm allowBuilds 授权）
 dsh plugin --profile web add github:SPYQWER1/dsh-imagegen
 
 # 或从 tarball 安装（pnpm pack 产物）
-dsh plugin --profile web add ./dsh-imagegen-1.1.0.tgz
+dsh plugin --profile web add ./dsh-imagegen-1.2.0.tgz
 
 # 或发布到 npm 后
 dsh plugin --profile web add dsh-imagegen
@@ -76,12 +56,7 @@ dsh plugin --profile web add dsh-imagegen
 
 然后重启该 profile（`dsh web` / `dsh --profile web`），所有会话即可见这两个工具。卸载：`dsh plugin --profile web remove dsh-imagegen`。git 安装建议固定 commit（`github:SPYQWER1/dsh-imagegen#<sha>`），避免后续推送静默改变安装内容。
 
-bundle 安装时 `@deepseek-ai/dsh-tools` 等 in-box 包以 optional peer 形式从 harness 安装解析，不会拉取额外 npm 包。bundle 入口是 `index.js`（部署级），preset 入口是 `imagegen-tool.js`（会话级）——两者共享 `tools.js` 与同一套 `scripts/` 传输层。
-
-| 安装形态 | 作用范围 | 命令 |
-| --- | --- | --- |
-| preset（`install.sh`） | 单个 agent preset / 其新会话 | `./install.sh --preset <id>` |
-| bundle（`dsh plugin add`） | 整个 profile / 所有会话 | `dsh plugin --profile web add github:SPYQWER1/dsh-imagegen` |
+bundle 安装时 `@deepseek-ai/dsh-tools` 等 in-box 包以 optional peer 形式从 harness 安装解析，不会拉取额外 npm 包。bundle 入口是 `index.js`，把两个工具注册进 host 注册表，并通过 `tools.js` 共享 `scripts/` 传输层。
 
 ### 作为独立 CLI
 
