@@ -5,10 +5,10 @@
 
 import { request as httpsRequest } from 'node:https'
 import {
-  readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, chmodSync,
+  readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, chmodSync, lstatSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, relative, resolve, isAbsolute, sep, win32 } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 export const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
@@ -30,6 +30,88 @@ export function defaultAuthPath(env = process.env) {
 export function defaultVersionPath(env = process.env) {
   const home = env.CODEX_HOME
   return home ? join(home, 'version.json') : join(homedir(), '.codex', 'version.json')
+}
+
+function workspaceRoot() {
+  return resolve(process.cwd())
+}
+
+function assertWorkspaceRelative(input, label) {
+  if (typeof input !== 'string' || !input.trim()) throw new Error(`${label} is required`)
+  if (input.includes('\0')) throw new Error(`${label} contains an invalid character`)
+  if (isAbsolute(input) || win32.isAbsolute(input) || /^[A-Za-z]:/.test(input)) throw new Error(`${label} must be relative to the workspace`)
+  const parts = input.split(/[\\/]+/)
+  if (parts.includes('..')) throw new Error(`${label} must not contain parent-directory segments`)
+  const root = workspaceRoot()
+  const target = resolve(root, input)
+  const rel = relative(root, target)
+  const parentPrefix = process.platform === 'win32' ? '..\\' : '../'
+  if (!rel || rel === '..' || rel.startsWith(parentPrefix) || isAbsolute(rel)) {
+    throw new Error(`${label} must stay inside the workspace`)
+  }
+  return { root, target }
+}
+
+export function resolveWorkspacePath(input, label = 'path') {
+  return assertWorkspaceRelative(input, label).target
+}
+
+export function workspaceRelativePath(target) {
+  const root = workspaceRoot()
+  const rel = relative(root, target)
+  if (!rel || rel.startsWith('..' + sep) || isAbsolute(rel)) throw new Error('path is outside the workspace')
+  return rel.split(sep).join('/')
+}
+
+function assertDirectoryChain(root, target) {
+  const rel = relative(root, target)
+  let current = root
+  for (const part of rel.split(/[\\/]+/).filter(Boolean)) {
+    current = join(current, part)
+    let info
+    try {
+      info = lstatSync(current)
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err
+      try {
+        mkdirSync(current)
+      } catch (mkdirErr) {
+        if (mkdirErr?.code !== 'EEXIST') throw mkdirErr
+      }
+      info = lstatSync(current)
+    }
+    if (info.isSymbolicLink()) throw new Error('workspace path must not contain symbolic links')
+    if (!info.isDirectory()) throw new Error('workspace output parent is not a directory')
+  }
+}
+
+export function prepareWorkspaceOutput(input, label = 'output path') {
+  const { root, target } = assertWorkspaceRelative(input, label)
+  assertDirectoryChain(root, dirname(target))
+  try {
+    if (lstatSync(target)) throw new Error(`${label} already exists`)
+  } catch (err) {
+    if (err?.code !== 'ENOENT') throw err
+  }
+  return target
+}
+
+export function resolveWorkspaceFile(input, label = 'image path') {
+  const { root, target } = assertWorkspaceRelative(input, label)
+  const rel = relative(root, target)
+  let current = root
+  for (const part of rel.split(/[\\/]+/).filter(Boolean)) {
+    current = join(current, part)
+    const info = lstatSync(current)
+    if (info.isSymbolicLink()) throw new Error(`${label} must not use symbolic links`)
+    if (current === target && !info.isFile()) throw new Error(`${label} must be a regular file`)
+    if (current !== target && !info.isDirectory()) throw new Error(`${label} parent is not a directory`)
+  }
+  return target
+}
+
+export function writeNewWorkspaceFile(target, bytes) {
+  writeFileSync(target, bytes, { flag: 'wx', mode: 0o600 })
 }
 
 export function readAuthJson(authPath = defaultAuthPath()) {
@@ -80,25 +162,39 @@ export function resolveCodexAuth(env = process.env, authPath = defaultAuthPath(e
     authPath,
     accessToken: env.CODEX_ACCESS_TOKEN || tokens.access_token || null,
     refreshToken: env.CODEX_REFRESH_TOKEN || tokens.refresh_token || null,
-    accountId: env.CODEX_ACCOUNT_ID || tokens.account_id || null,
   }
 }
 
 // One HTTPS JSON request; resolves { status, body } or rejects with { message }.
 export function jsonRequest(url, { method = 'POST', headers = {}, body = null, timeoutMs = CONNECT_TIMEOUT_MS } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const req = httpsRequest(url, {
+    let settled = false
+    let req
+    const timer = setTimeout(() => req?.destroy(new Error('request timeout')), timeoutMs)
+    const resolveOnce = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolvePromise(value)
+    }
+    const rejectOnce = (message) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      rejectPromise({ message })
+    }
+    req = httpsRequest(url, {
       method,
       headers,
       timeout: timeoutMs,
     }, (res) => {
       const chunks = []
       res.on('data', (chunk) => chunks.push(chunk))
-      res.on('end', () => resolvePromise({ status: res.statusCode, body: Buffer.concat(chunks) }))
-      res.on('error', (err) => rejectPromise({ message: 'response error: ' + err.message }))
+      res.on('end', () => resolveOnce({ status: res.statusCode, body: Buffer.concat(chunks) }))
+      res.on('error', (err) => rejectOnce('response error: ' + err.message))
     })
     req.on('timeout', () => req.destroy(new Error('connect timeout')))
-    req.on('error', (err) => rejectPromise({ message: 'network error: ' + err.message }))
+    req.on('error', (err) => rejectOnce('network error: ' + err.message))
     if (body !== null) req.write(body)
     req.end()
   })
@@ -121,7 +217,7 @@ export function refreshAccessToken(refreshToken, clientName = 'codex') {
   })
 }
 
-export function buildHeaders(accessToken, accountId, version, clientName = 'codex') {
+export function buildHeaders(accessToken, version, clientName = 'codex') {
   const sid = randomUUID()
   const headers = {
     'Content-Type': 'application/json',
@@ -134,7 +230,6 @@ export function buildHeaders(accessToken, accountId, version, clientName = 'code
     'User-Agent': `codex_cli_rs/${version} (Mac OS 26.0.1; arm64) ${clientName}`,
     originator: 'codex_cli_rs',
   }
-  if (accountId) headers['chatgpt-account-id'] = accountId
   return headers
 }
 
@@ -174,27 +269,33 @@ export async function* streamSSE(
       return
     }
     let buffer = ''
+    const parseLine = (rawLine) => {
+      const line = rawLine.replace(/\r$/, '')
+      if (!line || !line.startsWith('data:')) return
+      const payload = line.slice(5).replace(/^ /, '')
+      if (payload === '[DONE]') {
+        done = true
+        return
+      }
+      try {
+        queue.push({ event: JSON.parse(payload) })
+      } catch {
+        log('warning: skipped malformed SSE payload')
+      }
+    }
     res.on('data', (chunk) => {
       lastRead = Date.now()
       buffer += chunk.toString('utf8')
       let idx
       while ((idx = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, idx).replace(/\r$/, '')
+        parseLine(buffer.slice(0, idx))
         buffer = buffer.slice(idx + 1)
-        if (!line || !line.startsWith('data:')) continue
-        const payload = line.slice(5).replace(/^ /, '')
-        if (payload === '[DONE]') {
-          done = true
-          return
-        }
-        try {
-          queue.push({ event: JSON.parse(payload) })
-        } catch {
-          log('warning: skipped malformed SSE payload')
-        }
       }
     })
-    res.on('end', () => { done = true })
+    res.on('end', () => {
+      if (buffer) parseLine(buffer)
+      done = true
+    })
     res.on('error', (err) => { queue.push({ error: err }); done = true })
   })
   req.on('error', (err) => { queue.push({ error: err }); done = true })

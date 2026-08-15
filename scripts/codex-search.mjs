@@ -8,7 +8,7 @@
 //   CS_MAX_SOURCES  maximum sources, 1..10 (default 5)
 //   CS_FRESHNESS    cached | live (default cached)
 //   CS_MODEL        model id (default gpt-5.4-mini)
-//   CODEX_*         optional token/account overrides
+//   CODEX_ACCESS_TOKEN / CODEX_REFRESH_TOKEN  optional token overrides
 
 import {
   CODEX_RESPONSES_URL,
@@ -27,6 +27,8 @@ const DEFAULT_MAX_SOURCES = 5
 const MAX_SOURCES = 10
 const TOTAL_TIMEOUT_MS = 120_000
 const STALL_TIMEOUT_MS = 60_000
+const MAX_QUERY_CHARS = 4_000
+const MAX_MODEL_CHARS = 200
 const verbose = process.env.CS_VERBOSE === '1'
 const log = (message) => { if (verbose) console.error(message) }
 
@@ -118,14 +120,14 @@ function parseResult(text, query, freshness, maxSources, model) {
     const title = typeof source.title === 'string' ? source.title.trim() : ''
     const url = typeof source.url === 'string' ? source.url.trim() : ''
     const snippet = typeof source.snippet === 'string' ? source.snippet.trim() : ''
-    if (!title || !/^https?:\/\//i.test(url)) throw new Error('search backend returned an invalid source URL')
+    if (!title || !/^https?:\/\//i.test(url) || !snippet) throw new Error('search backend returned an invalid source')
     return { title, url, snippet }
   })
   return { ok: true, query, freshness, summary, sources, model }
 }
 
-async function searchOnce(accessToken, accountId, version, payload, query, freshness, maxSources, model) {
-  const headers = buildHeaders(accessToken, accountId, version, 'codex-search')
+async function searchOnce(accessToken, version, payload, query, freshness, maxSources, model) {
+  const headers = buildHeaders(accessToken, version, 'codex-search')
   const parts = []
   const saw = new Set()
   let failureDetail = null
@@ -153,25 +155,26 @@ async function searchOnce(accessToken, accountId, version, payload, query, fresh
 async function main() {
   const query = String(process.env.CS_QUERY || '').trim()
   if (!query) die('CS_QUERY is required')
+  if (query.length > MAX_QUERY_CHARS) die(`CS_QUERY must be at most ${MAX_QUERY_CHARS} characters`)
   const maxSources = Number(process.env.CS_MAX_SOURCES || DEFAULT_MAX_SOURCES)
   if (!Number.isInteger(maxSources) || maxSources < 1 || maxSources > MAX_SOURCES) die('CS_MAX_SOURCES must be an integer from 1 to 10')
   const freshness = process.env.CS_FRESHNESS || 'cached'
   if (freshness !== 'cached' && freshness !== 'live') die('CS_FRESHNESS must be cached or live')
-  const model = process.env.CS_MODEL || DEFAULT_MODEL
+  const model = String(process.env.CS_MODEL || DEFAULT_MODEL).trim()
+  if (!model || model.length > MAX_MODEL_CHARS) die(`CS_MODEL must be between 1 and ${MAX_MODEL_CHARS} characters`)
 
   const authPath = defaultAuthPath()
   const auth = readAuthJson(authPath)
   const tokens = auth.tokens && typeof auth.tokens === 'object' ? auth.tokens : {}
   let accessToken = process.env.CODEX_ACCESS_TOKEN || tokens.access_token || null
   const refreshToken = process.env.CODEX_REFRESH_TOKEN || tokens.refresh_token || null
-  const accountId = process.env.CODEX_ACCOUNT_ID || tokens.account_id || null
-  if (!accessToken) die('no ChatGPT OAuth access token: set CODEX_ACCESS_TOKEN or run `codex login`')
+  if (!accessToken) die('auth_failed')
 
   const version = detectVersion()
   const payload = buildPayload(query, maxSources, freshness, model)
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      console.log(JSON.stringify(await searchOnce(accessToken, accountId, version, payload, query, freshness, maxSources, model)))
+      console.log(JSON.stringify(await searchOnce(accessToken, version, payload, query, freshness, maxSources, model)))
       return
     } catch (error) {
       if (/401/.test(String(error?.message)) && refreshToken && attempt === 1) {
@@ -179,8 +182,7 @@ async function main() {
         try {
           const refreshed = await refreshAccessToken(refreshToken, 'codex-search')
           if (!refreshed.body || refreshed.status >= 400) {
-            const parsed = safeJson(refreshed.body)
-            die('token refresh failed: HTTP ' + refreshed.status + (parsed?.error ? ` (${parsed.error})` : ''))
+            die('auth_failed')
           }
           const data = safeJson(refreshed.body) || {}
           if (typeof data.access_token !== 'string') die('token refresh succeeded but returned no access_token')
@@ -194,13 +196,13 @@ async function main() {
           nextAuth.last_refresh = new Date().toISOString()
           persistAuth(nextAuth, authPath)
           continue
-        } catch (refreshError) {
-          die('token refresh failed: ' + (refreshError.message || refreshError))
+        } catch {
+          die('auth_failed')
         }
       }
-      die(error?.message || String(error))
+      die(/401/.test(String(error?.message)) ? 'auth_failed' : 'backend_unavailable')
     }
   }
 }
 
-main().catch((error) => die(error?.message || String(error)))
+main().catch(() => die('backend_unavailable'))

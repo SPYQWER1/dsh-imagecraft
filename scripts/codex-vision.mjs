@@ -7,21 +7,23 @@
 // deepseek-v4-flash) plug-in vision without any external API key.
 //
 // Inputs come from the environment so no shell quoting can corrupt them:
-//   VG_IMAGE      image path, absolute or relative to cwd (required; png,
+//   VG_IMAGE      image path relative to the workspace (required; png,
 //                 jpeg/jpg, webp, gif)
 //   VG_QUESTION   optional focus question (default: describe the image)
 //   VG_MODEL      model id (default gpt-5.5)
-//   CODEX_ACCESS_TOKEN / CODEX_REFRESH_TOKEN / CODEX_ACCOUNT_ID — same auth
-//                 precedence as codex-imagegen.mjs (env > ~/.codex/auth.json),
-//                 with one OAuth refresh + retry on HTTP 401.
+//   CODEX_ACCESS_TOKEN / CODEX_REFRESH_TOKEN — same auth precedence as
+//                 codex-imagegen.mjs (env > CODEX_HOME/auth.json
+//                 or ~/.codex/auth.json), with one OAuth refresh + retry on
+//                 HTTP 401. Images are capped at 15 MiB and stay in the workspace.
 //
 // stdout: one JSON line { ok, text, model, error?, ... }.
 // Exit code: 0 on success, 1 on failure.
 
-import { readFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, openSync, closeSync, constants } from 'node:fs'
 import {
   CODEX_RESPONSES_URL,
+  resolveWorkspaceFile,
+  workspaceRelativePath,
   defaultAuthPath,
   readAuthJson,
   persistAuth,
@@ -35,6 +37,7 @@ import {
 const TOTAL_TIMEOUT_MS = 180_000
 const STALL_TIMEOUT_MS = 90_000
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024
+const MAX_QUESTION_CHARS = 10_000
 
 const verbose = process.env.CG_VERBOSE === '1'
 const log = (msg) => { if (verbose) console.error(msg) }
@@ -76,8 +79,8 @@ function buildPayload(imageDataUrl, question, model) {
   }
 }
 
-async function answerOnce(accessToken, accountId, version, payload) {
-  const headers = buildHeaders(accessToken, accountId, version, 'codex-vision')
+async function answerOnce(accessToken, version, payload) {
+  const headers = buildHeaders(accessToken, version, 'codex-vision')
   const saw = new Set()
   const parts = []
   let failureDetail = null
@@ -109,19 +112,32 @@ async function answerOnce(accessToken, accountId, version, payload) {
 }
 
 async function main() {
-  const imagePath = process.env.VG_IMAGE
+  const imagePath = String(process.env.VG_IMAGE || '').trim()
   if (!imagePath) die('VG_IMAGE is required')
   const question = process.env.VG_QUESTION || ''
-  const model = process.env.VG_MODEL || 'gpt-5.5'
+  const model = String(process.env.VG_MODEL || 'gpt-5.5').trim()
+  if (question.length > MAX_QUESTION_CHARS) die(`VG_QUESTION must be at most ${MAX_QUESTION_CHARS} characters`)
+  if (!model || model.length > 200) die('VG_MODEL must be between 1 and 200 characters')
 
-  const target = resolve(imagePath)
-  if (!existsSync(target)) die(`image not found: ${target}`)
-  const mime = mimeFor(target)
-  if (!mime) die('unsupported image type (need png, jpeg, webp, or gif)')
-  const bytes = readFileSync(target)
-  if (bytes.length > MAX_IMAGE_BYTES) {
-    die(`image is ${(bytes.length / 1024 / 1024).toFixed(1)}MB; the cap is ${MAX_IMAGE_BYTES / 1024 / 1024}MB`)
+  let target
+  try {
+    target = resolveWorkspaceFile(imagePath, 'VG_IMAGE')
+  } catch (err) {
+    die(err.code === 'ENOENT' ? 'image_not_found' : 'invalid_path')
   }
+  const mime = mimeFor(target)
+  if (!mime) die('invalid_format')
+  let fd
+  let bytes
+  try {
+    fd = openSync(target, constants.O_RDONLY | (constants.O_NOFOLLOW || 0))
+    bytes = readFileSync(fd)
+  } catch {
+    die('invalid_path')
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+  if (bytes.length > MAX_IMAGE_BYTES) die('image_too_large')
   const imageDataUrl = `data:${mime};base64,${bytes.toString('base64')}`
 
   const authPath = defaultAuthPath()
@@ -129,16 +145,15 @@ async function main() {
   const tokens = auth.tokens && typeof auth.tokens === 'object' ? auth.tokens : {}
   let accessToken = process.env.CODEX_ACCESS_TOKEN || tokens.access_token || null
   const refreshToken = process.env.CODEX_REFRESH_TOKEN || tokens.refresh_token || null
-  const accountId = process.env.CODEX_ACCOUNT_ID || tokens.account_id || null
-  if (!accessToken) die('no ChatGPT OAuth access token: set CODEX_ACCESS_TOKEN or run `codex login`')
+  if (!accessToken) die('auth_failed')
 
   const version = detectVersion()
   const payload = buildPayload(imageDataUrl, question, model)
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const text = await answerOnce(accessToken, accountId, version, payload)
-      console.log(JSON.stringify({ ok: true, text, model, image: target }))
+      const text = await answerOnce(accessToken, version, payload)
+      console.log(JSON.stringify({ ok: true, text, model, image: workspaceRelativePath(target) }))
       return
     } catch (err) {
       const isAuthError = /401/.test(String(err && err.message))
@@ -147,8 +162,7 @@ async function main() {
         try {
           const refreshed = await refreshAccessToken(refreshToken, 'codex-vision')
           if (!refreshed.body || refreshed.status >= 400) {
-            const parsed = safeJson(refreshed.body)
-            die('token refresh failed: HTTP ' + refreshed.status + (parsed?.error ? ` (${parsed.error})` : ''))
+            die('auth_failed')
           }
           const data = safeJson(refreshed.body) || {}
           if (typeof data.access_token === 'string') {
@@ -164,13 +178,13 @@ async function main() {
             continue
           }
           die('token refresh succeeded but returned no access_token')
-        } catch (refreshErr) {
-          die('token refresh failed: ' + (refreshErr.message || refreshErr))
+        } catch {
+          die('auth_failed')
         }
       }
-      die(err && err.message ? err.message : String(err))
+      die(isAuthError ? 'auth_failed' : 'backend_unavailable')
     }
   }
 }
 
-main().catch((err) => die(err && err.message ? err.message : String(err)))
+main().catch(() => die('backend_unavailable'))

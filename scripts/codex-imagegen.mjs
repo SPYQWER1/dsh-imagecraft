@@ -10,30 +10,29 @@
 //
 // Inputs come from the environment so no shell quoting can corrupt them:
 //   CG_PROMPT        the image prompt (required)
-//   CG_OUT           output path, absolute or relative to cwd (required)
-//   CG_SIZE          "auto" or WIDTHxHEIGHT (optional)
+//   CG_OUT           output path relative to the workspace (required)
+//   CG_SIZE          one of the supported dimensions or "auto" (optional)
 //   CG_FORMAT        png | jpeg | webp (default png)
 //   CG_MODEL         model id (default gpt-5.5)
 //   CODEX_ACCESS_TOKEN   ChatGPT OAuth access token (optional; falls back to
 //                        ~/.codex/auth.json)
 //   CODEX_REFRESH_TOKEN  ChatGPT OAuth refresh token (optional; falls back to
 //                        ~/.codex/auth.json)
-//   CODEX_ACCOUNT_ID     ChatGPT account id (optional)
 //
-// Auth precedence: env tokens > ~/.codex/auth.json. When the access token is
-// rejected (HTTP 401), the script refreshes it once via
-// https://auth.openai.com/oauth/token and retries; refreshed tokens are
-// persisted back to ~/.codex/auth.json (atomic, 0600) so the Codex CLI and
-// every later call share them.
+// Auth precedence: env tokens > $CODEX_HOME/auth.json or ~/.codex/auth.json.
+// When the access token is rejected (HTTP 401), the script refreshes it once
+// via https://auth.openai.com/oauth/token and retries; refreshed tokens are
+// persisted back to the selected auth file (atomic, 0600).
 //
-// stdout: one JSON line { ok, outputPath, bytes, error?, ... }.
+// stdout: one JSON line { ok, outputPath: workspace-relative, bytes, error?, ... }.
 // stderr: progress lines only when CG_VERBOSE=1.
 // Exit code: 0 on success, 1 on failure.
 
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
 import {
   CODEX_RESPONSES_URL,
+  prepareWorkspaceOutput,
+  workspaceRelativePath,
+  writeNewWorkspaceFile,
   defaultAuthPath,
   readAuthJson,
   persistAuth,
@@ -46,6 +45,8 @@ import {
 
 const TOTAL_TIMEOUT_MS = 300_000
 const STALL_TIMEOUT_MS = 120_000
+const MAX_PROMPT_CHARS = 20_000
+const ALLOWED_SIZES = new Set(['1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', 'auto'])
 
 const verbose = process.env.CG_VERBOSE === '1'
 const log = (msg) => { if (verbose) console.error(msg) }
@@ -78,13 +79,16 @@ function buildPayload(prompt, size, format, model) {
   }
 }
 
-async function generateOnce(accessToken, accountId, version, payload) {
-  const headers = buildHeaders(accessToken, accountId, version, 'codex-imagegen')
+async function generateOnce(accessToken, version, payload) {
+  const headers = buildHeaders(accessToken, version, 'codex-imagegen')
   const saw = new Set()
   let imageB64 = null
   let failureDetail = null
   let revisedPrompt = null
-  for await (const evt of streamSSE(CODEX_RESPONSES_URL, headers, JSON.stringify(payload))) {
+  for await (const evt of streamSSE(CODEX_RESPONSES_URL, headers, JSON.stringify(payload), {
+    totalTimeoutMs: TOTAL_TIMEOUT_MS,
+    stallTimeoutMs: STALL_TIMEOUT_MS,
+  })) {
     const type = evt.type
     if (typeof type === 'string') saw.add(type)
     if (type === 'error' || type === 'response.failed') {
@@ -108,49 +112,54 @@ async function generateOnce(accessToken, accountId, version, payload) {
 }
 
 async function main() {
-  const prompt = process.env.CG_PROMPT
-  const out = process.env.CG_OUT
+  const prompt = String(process.env.CG_PROMPT || '').trim()
+  const out = String(process.env.CG_OUT || '').trim()
   if (!prompt || !out) die('CG_PROMPT and CG_OUT are required')
+  if (prompt.length > MAX_PROMPT_CHARS) die(`CG_PROMPT must be at most ${MAX_PROMPT_CHARS} characters`)
   const size = process.env.CG_SIZE || 'auto'
   const format = process.env.CG_FORMAT || 'png'
-  const model = process.env.CG_MODEL || 'gpt-5.5'
+  const model = String(process.env.CG_MODEL || 'gpt-5.5').trim()
   if (!/^(png|jpeg|webp)$/.test(format)) die('format must be png, jpeg, or webp')
-  if (size !== 'auto' && !/^\d+x\d+$/.test(size)) die('size must be auto or WIDTHxHEIGHT')
+  if (!ALLOWED_SIZES.has(size)) die('size must be one of 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152, auto')
+  if (!model || model.length > 200) die('CG_MODEL must be between 1 and 200 characters')
+  try {
+    prepareWorkspaceOutput(out, 'CG_OUT')
+  } catch (err) {
+    die(/already exists/i.test(String(err?.message)) ? 'output_exists' : 'invalid_path')
+  }
 
   const authPath = defaultAuthPath()
   const auth = readAuthJson(authPath)
   const tokens = auth.tokens && typeof auth.tokens === 'object' ? auth.tokens : {}
   let accessToken = process.env.CODEX_ACCESS_TOKEN || tokens.access_token || null
   const refreshToken = process.env.CODEX_REFRESH_TOKEN || tokens.refresh_token || null
-  const accountId = process.env.CODEX_ACCOUNT_ID || tokens.account_id || null
-  if (!accessToken) die('no ChatGPT OAuth access token: set CODEX_ACCESS_TOKEN or run `codex login`')
+  if (!accessToken) die('auth_failed')
 
   const version = detectVersion()
   const payload = buildPayload(prompt, size, format, model)
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const { bytes, revisedPrompt } = await generateOnce(accessToken, accountId, version, payload)
-      const target = resolve(out)
-      mkdirSync(dirname(target), { recursive: true })
-      writeFileSync(target, bytes)
+      const { bytes, revisedPrompt } = await generateOnce(accessToken, version, payload)
+      const target = prepareWorkspaceOutput(out, 'CG_OUT')
+      writeNewWorkspaceFile(target, bytes)
       console.log(JSON.stringify({
         ok: true,
-        outputPath: target,
+        outputPath: workspaceRelativePath(target),
         bytes: bytes.length,
         revisedPrompt,
         model,
       }))
       return
     } catch (err) {
+      if (err?.code === 'EEXIST' || /already exists/i.test(String(err?.message))) die('output_exists')
       const isAuthError = /401/.test(String(err && err.message))
       if (isAuthError && refreshToken && attempt === 1) {
         log('access token rejected; refreshing via OAuth')
         try {
           const refreshed = await refreshAccessToken(refreshToken, 'codex-imagegen')
           if (!refreshed.body || refreshed.status >= 400) {
-            const parsed = safeJson(refreshed.body)
-            die('token refresh failed: HTTP ' + refreshed.status + (parsed?.error ? ` (${parsed.error})` : ''))
+            die('auth_failed')
           }
           const data = safeJson(refreshed.body) || {}
           if (typeof data.access_token === 'string') {
@@ -166,13 +175,13 @@ async function main() {
             continue
           }
           die('token refresh succeeded but returned no access_token')
-        } catch (refreshErr) {
-          die('token refresh failed: ' + (refreshErr.message || refreshErr))
+        } catch {
+          die('auth_failed')
         }
       }
-      die(err && err.message ? err.message : String(err))
+      die(isAuthError ? 'auth_failed' : 'backend_unavailable')
     }
   }
 }
 
-main().catch((err) => die(err && err.message ? err.message : String(err)))
+main().catch(() => die('backend_unavailable'))

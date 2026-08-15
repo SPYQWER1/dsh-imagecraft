@@ -19,9 +19,8 @@ The package has no npm runtime dependencies and uses Node's built-in `https` tra
 - A ChatGPT/Codex login state, either `codex login` with an auth file, or credentials in DSH:
   - `OPENAI_CODEX_API_KEY`
   - `OPENAI_CODEX_REFRESH_TOKEN`
-  - optional `OPENAI_CODEX_ACCOUNT_ID`
 
-Credentials are resolved from `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, and `CODEX_ACCOUNT_ID` environment variables first (the plugin maps the DSH credential names above to these variables). If those are absent, the transport reads `$CODEX_HOME/auth.json` when `CODEX_HOME` is set, or `~/.codex/auth.json` otherwise. Set `CODEX_HOME` to choose another auth directory; the default is `~/.codex`. After an HTTP 401, a transport refreshes the access token once and attempts to persist the refreshed login state to that auth file. When the plugin injects DSH credentials, the refresh code may still write to the auth file selected by `CODEX_HOME` or the default path.
+Credentials are resolved from `CODEX_ACCESS_TOKEN` and `CODEX_REFRESH_TOKEN` environment variables first (the plugin maps the DSH credential names above to these variables). If those are absent, the transport reads `$CODEX_HOME/auth.json` when `CODEX_HOME` is set, or `~/.codex/auth.json` otherwise. Set `CODEX_HOME` to choose another auth directory; the default is `~/.codex`. After an HTTP 401, a transport refreshes the access token once and attempts to persist the refreshed login state to that auth file. When the plugin injects DSH credentials, the refresh code may still write to the auth file selected by `CODEX_HOME` or the default path.
 
 ## Installation
 
@@ -47,11 +46,11 @@ The bundle entry is `index.js`; `tools.js` invokes the transports in `scripts/`.
 The transports also run without the Harness. Inputs are environment variables and each command prints one JSON result line:
 
 ```bash
-# Generate an image. CG_OUT may be absolute or relative to the transport cwd.
+# Generate an image. CG_OUT must be relative to the transport workspace.
 CG_PROMPT="a cute whale icon, flat vector style" CG_OUT=output/whale.png CG_SIZE=1024x1024 \
   node scripts/codex-imagegen.mjs
 
-# Describe an image; VG_IMAGE may be absolute or relative to the transport cwd.
+# Describe an image; VG_IMAGE must be relative to the transport workspace.
 VG_IMAGE=output/whale.png VG_QUESTION="what is this?" \
   node scripts/codex-vision.mjs
 
@@ -60,7 +59,7 @@ CS_QUERY="latest DeepSeek Harness release" CS_FRESHNESS=live \
   node scripts/codex-search.mjs
 ```
 
-These commands need network access and valid ChatGPT/Codex OAuth credentials. Standalone scripts read `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, and `CODEX_ACCOUNT_ID`, or the auth file described above; the `OPENAI_CODEX_*` names are the DSH credential names used by the plugin. Do not treat a network smoke test as passing unless it was actually run with credentials.
+These commands need network access and valid ChatGPT/Codex OAuth credentials. Standalone scripts read `CODEX_ACCESS_TOKEN` and `CODEX_REFRESH_TOKEN`, or the auth file described above; the `OPENAI_CODEX_*` names are the DSH credential names used by the plugin. Do not treat a network smoke test as passing unless it was actually run with credentials.
 
 ## Tool parameters
 
@@ -80,7 +79,7 @@ The result contains `summary` and `sources`; each source has a title, URL, and s
 | Parameter | Type | Default / limits |
 | --- | --- | --- |
 | `prompt` | string (required) | Describe the subject, style, composition, palette, and constraints. |
-| `out` | string | `output/imagegen/<timestamp>.png`; relative paths are resolved by the transport process, and absolute paths are accepted. Parent directories are created. An existing file can be overwritten. If `out` is omitted, the default filename remains `.png` even when `format` is `jpeg` or `webp`. |
+| `out` | string | `output/imagegen/<timestamp>.<format>`; must be relative to the transport workspace. Absolute paths, parent-directory segments, and symbolic links are rejected. Parent directories are created, and existing files are never overwritten. If `out` is omitted, the extension follows `format`. |
 | `size` | string | `auto`, `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, or `2048x1152`. |
 | `format` | string | `png`, `jpeg`, or `webp`; default `png`. |
 | `model` | string | `gpt-5.5`. |
@@ -91,11 +90,11 @@ Transparent-background output is unsupported; request a suitable solid/chroma-ke
 
 | Parameter | Type | Default / limits |
 | --- | --- | --- |
-| `image` | string (required) | Existing `png`, `jpeg/jpg`, `webp`, or `gif`; relative or absolute path. Maximum 15 MiB. |
+| `image` | string (required) | Existing `png`, `jpeg/jpg`, `webp`, or `gif` under the transport workspace; absolute paths, parent-directory segments, and symbolic links are rejected. Maximum 15 MiB. |
 | `question` | string | Optional focus question; omitted means a full description. |
 | `model` | string | `gpt-5.5`. |
 
-The transport reads the local file, embeds it in the request, and sends it to the ChatGPT Codex endpoint. Absolute paths are accepted, but the code does not enforce a path boundary; only pass images the process is authorized to read.
+The transport reads the local file, embeds it in the request, and sends it to the ChatGPT Codex endpoint. Only files inside the transport workspace are accepted.
 
 ## Architecture
 
@@ -121,12 +120,9 @@ index.js -> tools.js -> scripts/codex-*.mjs
 
 ## Known limitations and follow-up
 
-The following items are not fixed in the current implementation:
-
-- `image_gen` accepts absolute paths and paths relative to the transport process cwd. It creates parent directories and may overwrite an existing file. Workspace boundaries, symlink checks, and exclusive file creation are not enforced.
-- `image_vision` accepts absolute paths and sends the complete local image to the Codex endpoint. Workspace boundaries and symlink checks are not enforced; do not pass sensitive images or paths the process should not read.
-- Input length/resource limits, strict transport-level validation, error redaction, and malformed-response coverage need improvement. Token refresh persistence and the required `fs` service injection also need host-level review.
-- Profile installation, restart/removal, OAuth refresh, and cross-platform path behavior require integration testing. The offline checks below do not cover those cases.
+- `image_gen` and `image_vision` accept only workspace-relative paths. Absolute paths, parent-directory segments, and symbolic links are rejected. Image generation creates parent directories but never overwrites an existing file.
+- Image files are still sent to the ChatGPT Codex endpoint for analysis. Do not pass sensitive images.
+- The transports enforce basic input length, image-size, path, and format limits. Profile installation, restart/removal, OAuth refresh, and cross-platform behavior still require integration testing; the offline checks below do not cover those cases.
 
 ## Development checks
 
