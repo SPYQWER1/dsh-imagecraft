@@ -134,7 +134,7 @@ export function installImageTools(define, deps, register) {
     description: 'Generate a new bitmap image (illustrations, icons, logos, photos, concept art, UI mockups, game assets) via the ChatGPT subscription. Use when the user asks to create or generate an image. Do NOT use to edit/transform an existing image (no input-image support), to produce transparent-background images (unsupported; suggest a chroma-key background instead), or when a vector/SVG/code asset is the better fit. Write `prompt` in detail: subject, style, composition, palette, lighting, constraints. Leave `size` as auto unless the user gives dimensions. On success the result carries the absolute `outputPath` — report it to the user. Result JSON: { ok, outputPath, bytes, revisedPrompt, model } or { ok: false, error }.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'Image description: subject, style, composition, palette, lighting, constraints. More detail yields better results.' },
-      out: { type: 'string', description: 'Output path relative to the workspace; parent directories are created. Default: output/imagegen/<timestamp>.png (never overwrites existing files).' },
+      out: { type: 'string', description: 'Output path resolved by the transport process; absolute paths are accepted, parent directories are created, and an existing file may be overwritten. Default: output/imagegen/<timestamp>.png.' },
       size: { type: 'string', description: 'One of 1024x1024, 1536x1024, 1024x1536, 2048x2048, 2048x1152. Default: auto — set only when the user specifies dimensions or aspect ratio.' },
       format: { type: 'string', enum: ['png', 'jpeg', 'webp'], description: 'Output format. Default: png; use jpeg/webp when the user wants a smaller file.' },
       model: { type: 'string', description: 'Backend model id. Default: gpt-5.5.' }
@@ -176,9 +176,9 @@ export function installImageTools(define, deps, register) {
 
   const visionTool = define({
     name: 'image_vision',
-    description: 'Describe or answer questions about an image via the ChatGPT subscription (multimodal). Use when the user references an image and you cannot see its content. `image` must be an existing file (png/jpeg/webp/gif), workspace-relative or absolute — verify it exists before calling; never guess the content. `question` is optional, any language (e.g. "翻译图中文字"); omit it for a full description (subjects, style, composition, colors, verbatim text). Never build your own OCR or read image bytes yourself — always use this tool. Returns { ok, text, model, image } or { ok: false, error }; relay `text` to the user.',
+    description: 'Describe or answer questions about an image via the ChatGPT subscription (multimodal). Use when the user references an image and you cannot see its content. `image` must be an existing file (png/jpeg/webp/gif), relative to the transport process cwd or absolute — verify it exists before calling; never guess the content. `question` is optional, any language (e.g. "翻译图中文字"); omit it for a full description (subjects, style, composition, colors, verbatim text). Never build your own OCR or read image bytes yourself — always use this tool. Returns { ok, text, model, image } or { ok: false, error }; relay `text` to the user.',
     parameters: {
-      image: { type: 'string', required: true, description: 'Path to an existing image file (png/jpeg/webp/gif), relative to the workspace or absolute.' },
+      image: { type: 'string', required: true, description: 'Path to an existing image file (png/jpeg/webp/gif), relative to the transport process cwd or absolute.' },
       question: { type: 'string', description: 'Optional focus question or instruction, any language. Omit for a full description.' },
       model: { type: 'string', description: 'Backend model id. Default: gpt-5.5.' }
     },

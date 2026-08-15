@@ -2,132 +2,147 @@
 
 [中文](./README.zh-CN.md)
 
-**Image generation and image understanding for the DeepSeek Harness — powered by your ChatGPT subscription. No `OPENAI_API_KEY` needed.**
+A DeepSeek Harness plugin that registers three model tools backed by the ChatGPT Codex transport:
 
-A DeepSeek Harness plugin that registers three Codex-backed model tools:
-
-| Tool | What it does |
+| Tool | Function |
 | --- | --- |
-| `web_search` | Searches the public web and returns a concise summary with source URLs. |
-| `image_gen` | Generates a bitmap image (illustrations, icons, logos, photos, concept art, UI mockups) through the ChatGPT Codex backend. |
-| `image_vision` | Describes or answers questions about an image with a multimodal model — giving text-only harness models (e.g. `deepseek-v4-flash`) plug-in vision. |
+| `web_search` | Searches the public web and returns a summary with source URLs. |
+| `image_gen` | Generates a bitmap image. It does not edit or transform an existing image. |
+| `image_vision` | Reads a local image and returns a description or an answer to a question about it. |
 
-All three tools reuse the **ChatGPT login state** (the same OAuth tokens the official Codex CLI uses) and the harness-owned transports in [`scripts/`](./scripts) — zero npm dependencies, Node built-in `https` only.
+The package has no npm runtime dependencies and uses Node's built-in `https` transport. It consumes an existing Codex/ChatGPT login; it does not provide login or an LLM provider.
 
-## How it works
+## Runtime requirements
 
-```
-web_search / image_gen / image_vision (model tool)
-        │  harness.registerTool + credentials service
-        ▼
-index.js (Cordis bundle entry)
-        │  shell service, env-only argument passing
-        ▼
-scripts/codex-common.mjs / codex-imagegen.mjs / codex-vision.mjs / codex-search.mjs   ← harness-owned transports
-        │  OAuth refresh (auth.openai.com) + POST chatgpt.com/backend-api/codex/responses
-        ▼
-        gpt-5.5 (multimodal) → PNG file / text description
-```
+- DeepSeek Harness, with the plugin installed as a profile-level Cordis bundle.
+- Node.js >= 22.
+- A ChatGPT/Codex login state, either `codex login` with an auth file, or credentials in DSH:
+  - `OPENAI_CODEX_API_KEY`
+  - `OPENAI_CODEX_REFRESH_TOKEN`
+  - optional `OPENAI_CODEX_ACCOUNT_ID`
 
-Auth precedence (all transports): `CODEX_ACCESS_TOKEN` / `CODEX_REFRESH_TOKEN` / `CODEX_ACCOUNT_ID` environment variables (resolved from the DSH credentials service, keys `OPENAI_CODEX_API_KEY` / `OPENAI_CODEX_REFRESH_TOKEN` / optional `OPENAI_CODEX_ACCOUNT_ID`) → `$CODEX_HOME/auth.json` → `~/.codex/auth.json` (`codex login`). On HTTP 401 the transport refreshes the access token once and persists it back to the selected auth file (atomic, 0600). This plugin consumes the login state; it does not provide Codex authentication or an LLM provider.
+Credentials are resolved from `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, and `CODEX_ACCOUNT_ID` environment variables first (the plugin maps the DSH credential names above to these variables). If those are absent, the transport reads `$CODEX_HOME/auth.json` when `CODEX_HOME` is set, or `~/.codex/auth.json` otherwise. Set `CODEX_HOME` to choose another auth directory; the default is `~/.codex`. After an HTTP 401, a transport refreshes the access token once and attempts to persist the refreshed login state to that auth file. When the plugin injects DSH credentials, the refresh code may still write to the auth file selected by `CODEX_HOME` or the default path.
 
-## Requirements
+## Installation
 
-- DeepSeek Harness (the plugin is installed as a profile-wide Cordis bundle; tested against current builds)
-- Node.js ≥ 22 (for the transports)
-- A ChatGPT subscription login state:
-  - `~/.codex/auth.json` from `codex login` (recommended), **or**
-  - the `OPENAI_CODEX_API_KEY` / `OPENAI_CODEX_REFRESH_TOKEN` credentials in DSH
-
-## Install
-
-The package ships as a **bundle**: installing it into a profile registers the tools in the host registry, so **every session of that profile** gets them.
+The package is a bundle. Installing it into a profile registers the tools for every session of that profile.
 
 ```bash
-# from a git host (no build step, so no pnpm allowBuilds permission needed)
+# Git (there is no build step)
 dsh plugin --profile web add github:SPYQWER1/dsh-codex-tools
 
-# or from a tarball (pnpm pack)
+# Local or downloaded tarball
 dsh plugin --profile web add ./dsh-codex-tools-1.0.0.tgz
 
-# or from npm, once published
+# npm, once published
 dsh plugin --profile web add dsh-codex-tools
 ```
 
-Then restart the profile (`dsh web` / `dsh --profile web`) — the tools appear in every session. `dsh plugin --profile web remove dsh-codex-tools` uninstalls. Pin a commit for git installs (`github:SPYQWER1/dsh-codex-tools#<sha>`) so a later push cannot change what runs.
+Restart the profile (`dsh web` or `dsh --profile web`) after installation. Remove it with `dsh plugin --profile web remove dsh-codex-tools`. For a Git install, pin a commit, for example `github:SPYQWER1/dsh-codex-tools#<sha>`.
 
-Bundle install resolves the in-box `@deepseek-ai/dsh-tools` peer from the harness installation; no extra npm packages are fetched. The bundle entry is `index.js`, which registers all three tools into the host registry and shares the `scripts/` transports via `tools.js`.
+The bundle entry is `index.js`; `tools.js` invokes the transports in `scripts/`. The optional peer packages are resolved from the Harness installation. To inspect the files that would be published, run `npm pack --dry-run`.
 
-### As standalone CLI
+## Standalone CLI
 
-The transports are plain Node scripts and work without the harness:
+The transports also run without the Harness. Inputs are environment variables and each command prints one JSON result line:
 
 ```bash
-# generate an image (writes the PNG, prints JSON to stdout)
-CG_PROMPT="a cute whale icon, flat vector style" CG_OUT=whale.png CG_SIZE=1024x1024 \
+# Generate an image. CG_OUT may be absolute or relative to the transport cwd.
+CG_PROMPT="a cute whale icon, flat vector style" CG_OUT=output/whale.png CG_SIZE=1024x1024 \
   node scripts/codex-imagegen.mjs
 
-# describe an image
-VG_IMAGE=whale.png VG_QUESTION="what is this?" node scripts/codex-vision.mjs
+# Describe an image; VG_IMAGE may be absolute or relative to the transport cwd.
+VG_IMAGE=output/whale.png VG_QUESTION="what is this?" \
+  node scripts/codex-vision.mjs
 
-# search the public web
-CS_QUERY="latest DeepSeek Harness release" CS_FRESHNESS=live node scripts/codex-search.mjs
+# Search the public web.
+CS_QUERY="latest DeepSeek Harness release" CS_FRESHNESS=live \
+  node scripts/codex-search.mjs
 ```
 
-## Usage
+These commands need network access and valid ChatGPT/Codex OAuth credentials. Standalone scripts read `CODEX_ACCESS_TOKEN`, `CODEX_REFRESH_TOKEN`, and `CODEX_ACCOUNT_ID`, or the auth file described above; the `OPENAI_CODEX_*` names are the DSH credential names used by the plugin. Do not treat a network smoke test as passing unless it was actually run with credentials.
 
-Ask the harness in natural language — the model drives the tools itself:
+## Tool parameters
 
-- *"Search for the latest DeepSeek Harness release"* → `web_search`
-- *"生成一个鲸鱼图标"* → `image_gen`
-- *"看看这个图片讲了什么：output/photo.png"* → `image_vision`
+### `web_search`
 
-### `web_search` parameters
-
-| Param | Type | Notes |
+| Parameter | Type | Default / limits |
 | --- | --- | --- |
 | `query` | string (required) | Public-web research question. |
-| `maxSources` | integer | 1–10, default `5`. |
-| `freshness` | string | `cached` (default) or `live` for time-sensitive queries. |
-| `model` | string | ChatGPT backend model, default `gpt-5.4-mini`. |
+| `maxSources` | integer | `5`; from 1 to 10. |
+| `freshness` | string | `cached`, or `live` for time-sensitive queries. |
+| `model` | string | `gpt-5.4-mini`. |
 
-The result contains `summary` and `sources`, where each source has a title, URL, and short snippet.
+The result contains `summary` and `sources`; each source has a title, URL, and snippet.
 
-### `image_gen` parameters
+### `image_gen`
 
-| Param | Type | Notes |
+| Parameter | Type | Default / limits |
 | --- | --- | --- |
-| `prompt` | string (required) | Detailed description (subject, style, composition, palette, constraints). |
-| `out` | string | Output path relative to the workspace. Default `output/imagegen/<timestamp>.png`. |
-| `size` | string | `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, `2048x1152`, or `auto` (default). |
-| `format` | string | `png` (default), `jpeg`, `webp`. |
-| `model` | string | ChatGPT backend model, default `gpt-5.5`. |
+| `prompt` | string (required) | Describe the subject, style, composition, palette, and constraints. |
+| `out` | string | `output/imagegen/<timestamp>.png`; relative paths are resolved by the transport process, and absolute paths are accepted. Parent directories are created. An existing file can be overwritten. If `out` is omitted, the default filename remains `.png` even when `format` is `jpeg` or `webp`. |
+| `size` | string | `auto`, `1024x1024`, `1536x1024`, `1024x1536`, `2048x2048`, or `2048x1152`. |
+| `format` | string | `png`, `jpeg`, or `webp`; default `png`. |
+| `model` | string | `gpt-5.5`. |
 
-### `image_vision` parameters
+Transparent-background output is unsupported; request a suitable solid/chroma-key background and remove it locally if needed.
 
-| Param | Type | Notes |
+### `image_vision`
+
+| Parameter | Type | Default / limits |
 | --- | --- | --- |
-| `image` | string (required) | Path to the image (png/jpeg/webp/gif), workspace-relative or absolute. |
-| `question` | string | Optional focus question; defaults to a full description. |
-| `model` | string | Default `gpt-5.5`. |
+| `image` | string (required) | Existing `png`, `jpeg/jpg`, `webp`, or `gif`; relative or absolute path. Maximum 15 MiB. |
+| `question` | string | Optional focus question; omitted means a full description. |
+| `model` | string | `gpt-5.5`. |
 
-## Gallery
+The transport reads the local file, embeds it in the request, and sends it to the ChatGPT Codex endpoint. Absolute paths are accepted, but the code does not enforce a path boundary; only pass images the process is authorized to read.
 
-`image_gen` — generate an image from a natural-language request:
+## Architecture
 
-![image_gen demo](./生图.png)
+```
+Harness model tool
+        |
+        v
+index.js -> tools.js -> scripts/codex-*.mjs
+                              |
+                              +-- OAuth refresh (auth.openai.com)
+                              +-- POST chatgpt.com/backend-api/codex/responses
+                              |
+             web_search: gpt-5.4-mini by default
+             image_gen / image_vision: gpt-5.5 by default
+```
 
-`image_vision` — a text-only model reads an image:
+## Caveats and service terms
 
-![image_vision demo](./识图.png)
+- `chatgpt.com/backend-api/codex/responses` is an internal endpoint used by the official Codex CLI, not a documented public API. It may change or be restricted without notice.
+- Search summaries and snippets are model-generated; open the returned source URLs and check the original text before relying on them.
+- Web search and image generation use the metered **Codex-usage** bucket of the ChatGPT plan.
+- Follow OpenAI's Terms of Use; do not use a ChatGPT subscription to power a public-facing image-generation service.
 
-## Caveats
+## Known limitations and follow-up
 
-- `chatgpt.com/backend-api/codex/responses` is the same internal endpoint the official Codex CLI uses. It is **not** a documented public API — OpenAI may change or restrict it at any time.
-- Web search and image generation use the metered **Codex-usage** bucket of your ChatGPT plan.
-- Per OpenAI Terms of Use, do not use your ChatGPT subscription to power a public-facing image generation service.
-- Transparent-background output is not supported (use a chroma-key background + local removal instead).
+The following items are not fixed in the current implementation:
+
+- `image_gen` accepts absolute paths and paths relative to the transport process cwd. It creates parent directories and may overwrite an existing file. Workspace boundaries, symlink checks, and exclusive file creation are not enforced.
+- `image_vision` accepts absolute paths and sends the complete local image to the Codex endpoint. Workspace boundaries and symlink checks are not enforced; do not pass sensitive images or paths the process should not read.
+- Input length/resource limits, strict transport-level validation, error redaction, and malformed-response coverage need improvement. Token refresh persistence and the required `fs` service injection also need host-level review.
+- Profile installation, restart/removal, OAuth refresh, and cross-platform path behavior require integration testing. The offline checks below do not cover those cases.
+
+## Development checks
+
+Run the following offline checks before submitting documentation or code changes:
+
+```bash
+npm pack --dry-run
+node --check index.js
+node --check tools.js
+node --check scripts/codex-common.mjs
+node --check scripts/codex-imagegen.mjs
+node --check scripts/codex-vision.mjs
+node --check scripts/codex-search.mjs
+node --test test/tools.test.mjs
+```
 
 ## License
 
-MIT — see [LICENSE](./LICENSE). The protocol shape follows the public behavior of the Codex CLI and the [chatgpt-imagegen](https://github.com/leeguooooo/chatgpt-imagegen) project; the implementation here is original.
+MIT — see [LICENSE](./LICENSE).
